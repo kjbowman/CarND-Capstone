@@ -3,6 +3,7 @@
 import rospy
 from geometry_msgs.msg import PoseStamped
 from styx_msgs.msg import Lane, Waypoint
+from std_msgs.msg import Int32
 
 import numpy as np
 from scipy.spatial import KDTree
@@ -24,35 +25,36 @@ TODO (for Yousuf and Aaron): Stopline location for each traffic light.
 '''
 
 LOOKAHEAD_WPS = 200 # Number of waypoints we will publish. You can change this number
-
+MAX_DECEL = 0.5
 
 class WaypointUpdater(object):
     def __init__(self):
         rospy.init_node('waypoint_updater')
 
+        # Subscribers
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
         rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
-
         # TODO: Add a subscriber for /traffic_waypoint and /obstacle_waypoint below
+        rospy.Subscriber('/traffic_waypoint', Int32, self.traffic_cb)
 
+        # Publishers
         self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
 
-        # TODO: Add other member variables you need below
-        self.pose = None
+        # member variables
         self.base_waypoints = None
-        self.waypoints_2d = None
-        self.waypoint_tree = None
+        self.waypoints_2d = None    # [x, y] coordinates of base_waypoints
+        self.waypoint_tree = None   # k-d tree of waypoints_2d
+        self.pose = None
+        self.stopline_wp_inx = -1
         
-        # rospy.spin()
-        self.loop()
+        self.loop()     # replaces rospy.spin() so we can control the rate
 
     def loop(self):
-        rate = rospy.Rate(50)
+        rate = rospy.Rate(20)   # was 50 Hz - reduced to help with simulation performance
         while not rospy.is_shutdown():
             if self.pose and self.base_waypoints:
-                # get closest waypoint
-                closest_waypoint_inx = self.get_closest_waypoint_inx()
-                self.publish_waypoints(closest_waypoint_inx)
+                final_lane = self.generate_lane()
+                self.final_waypoints_pub.publish(final_lane)
             rate.sleep()
     
     def get_closest_waypoint_inx(self):
@@ -68,18 +70,42 @@ class WaypointUpdater(object):
         cl_vect = np.array(closest_coord)
         prev_vect = np.array(prev_coord)
         pos_vect = np.array([x, y])
-
         val = np.dot(cl_vect - prev_vect, pos_vect - cl_vect)
 
         if val > 0:
             closest_inx = (closest_inx + 1) % len(self.waypoints_2d)
         return closest_inx
 
-    def publish_waypoints(self, closest_inx):
+    def generate_lane(self):
         lane = Lane()
-        lane.header = self.base_waypoints.header
-        lane.waypoints = self.base_waypoints.waypoints[closest_inx:closest_inx + LOOKAHEAD_WPS]
-        self.final_waypoints_pub.publish(lane)
+
+        closest_inx = self.get_closest_waypoint_inx()
+        farthest_inx = closest_inx + LOOKAHEAD_WPS
+        base_wps = self.base_waypoints.waypoints[closest_inx:farthest_inx]
+
+        if (self.stopline_wp_inx == -1) or (self.stopline_wp_inx >= farthest_inx):
+            lane.waypoints = base_wps
+        else:
+            lane.waypoints = self.decelerate_waypoints(base_wps, closest_inx)
+        
+        return lane
+    
+    def decelerate_waypoints(self, waypoints, closest_inx):
+        temp = []
+        for i, wp in enumerate(waypoints):
+            p = Waypoint()
+            p.pose = wp.pose
+
+            stop_inx = max(self.stopline_wp_inx - closest_inx - 2, 0)
+            dist = self.distance(waypoints, i, stop_inx)
+            vel = math.sqrt(2 * MAX_DECEL * dist)
+            if vel < 1.0:
+                vel = 0.0
+            
+            p.twist.twist.linear.x = min(vel, wp.twist.twist.linear.x)
+            temp.append(p)
+
+        return temp
 
     def pose_cb(self, msg):
         self.pose = msg
@@ -93,7 +119,7 @@ class WaypointUpdater(object):
             
     def traffic_cb(self, msg):
         # TODO: Callback for /traffic_waypoint message. Implement
-        pass
+        self.stopline_wp_inx = msg.data
 
     def obstacle_cb(self, msg):
         # TODO: Callback for /obstacle_waypoint message. We will implement it later
