@@ -14,6 +14,8 @@ from scipy.spatial import KDTree
 
 
 STATE_COUNT_THRESHOLD = 3
+COLLECT_TRAINING_IMAGES = False
+
 
 class TLDetector(object):
     def __init__(self):
@@ -81,6 +83,8 @@ class TLDetector(object):
         self.camera_image = msg
         light_wp, state = self.process_traffic_lights()
 
+        # rospy.logwarn("light state: {0}".format(state))
+
         '''
         Publish upcoming red lights at camera frequency.
         Each predicted state has to occur `STATE_COUNT_THRESHOLD` number
@@ -124,13 +128,30 @@ class TLDetector(object):
 
         """
         # For testing, just return the state given by the simulator
-        return light.state
+        # return light.state
 
         # if(not self.has_image):
         #     self.prev_light_loc = None
         #     return False
 
-        # cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
+        cv_img = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
+
+        if COLLECT_TRAINING_IMAGES:
+            nsec_id = rospy.Time.from_sec(rospy.get_time()).to_nsec()
+            img_file_name = r"/home/student/CarND-Capstone/training_images/{0}/{1}.png".format(state, nsec_id)
+            cv2.imwrite(img_file_name, cv_img)
+
+        # Check for presence of red circle(s) in the image
+        # (this works OK for the simulator but is obviously too naive for real-world driving)
+        hsv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2HSV)
+        lower_red_img = cv2.inRange(hsv_img, (0, 100, 80), (15, 255, 255))
+        upper_red_img = cv2.inRange(hsv_img, (160, 100, 80), (179, 255, 255))
+        red_img = cv2.addWeighted(lower_red_img, 1, upper_red_img, 1, 0)
+        circles = cv2.HoughCircles(red_img, cv2.HOUGH_GRADIENT, 1, 20, param1=20, param2=10, minRadius=3, maxRadius=30)
+        if circles is not None:
+            return TrafficLight.RED
+
+        return TrafficLight.UNKNOWN
 
         # #Get classification
         # return self.light_classifier.get_classification(cv_image)
@@ -166,8 +187,9 @@ class TLDetector(object):
                     line_wp_inx = temp_wp_inx
 
         if closest_light:
-            state = self.get_light_state(closest_light)
-            return line_wp_inx, state
+            if (line_wp_inx - 350) <= car_wp_inx <= line_wp_inx:  # only look when approaching a known light 
+                state = self.get_light_state(closest_light)
+                return line_wp_inx, state
 
         return -1, TrafficLight.UNKNOWN
 

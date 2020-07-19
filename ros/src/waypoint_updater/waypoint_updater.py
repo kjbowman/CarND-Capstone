@@ -50,7 +50,7 @@ class WaypointUpdater(object):
         self.loop()     # replaces rospy.spin() so we can control the rate
 
     def loop(self):
-        rate = rospy.Rate(20)   # was 50 Hz - reduced to help with simulation performance
+        rate = rospy.Rate(50)   # reduce to ~ 20 to help with simulation performance in VM
         while not rospy.is_shutdown():
             if self.pose and self.base_waypoints:
                 final_lane = self.generate_lane()
@@ -80,6 +80,7 @@ class WaypointUpdater(object):
         lane = Lane()
 
         closest_inx = self.get_closest_waypoint_inx()
+
         farthest_inx = closest_inx + LOOKAHEAD_WPS
         base_wps = self.base_waypoints.waypoints[closest_inx:farthest_inx]
 
@@ -96,7 +97,7 @@ class WaypointUpdater(object):
             p = Waypoint()
             p.pose = wp.pose
 
-            stop_inx = max(self.stopline_wp_inx - closest_inx - 2, 0)
+            stop_inx = max(self.stopline_wp_inx - closest_inx - 3, 0)
             dist = self.distance(waypoints, i, stop_inx)
             vel = math.sqrt(2 * MAX_DECEL * dist)
             if vel < 1.0:
